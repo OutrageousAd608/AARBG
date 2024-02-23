@@ -1,6 +1,7 @@
 #define servoincrement 15 //microseconds, approximately 2.7 degrees
 #define crashangle 30 //degrees
 #define PI 3.14159265358979323
+#define obstacleturntime 3000 //3 seconds
 
 #include <Servo.h>
 
@@ -10,68 +11,71 @@ Servo rudderservo;
 Servo stopperservo;
 
 // global variables
-double IMUrollangle = 0;
-double IMUpitchangle = 0;
+int earthradius = 6367460; //earth's radius in m for Wolfville, Nova Scotia
+int timetogohome = 300000; //time in milliseconds after which the aircraft will return to its start position
 
-double errorL = 0;
-double errorproportionL = 0;
-double errorsumL = 0;
-double changeinerrorL = 0;
+//PID controller variables
 double olderrorL = 0;
-double PIDoutputL = 0;
-
-double errorR = 0;
-double errorproportionR = 0;
-double errorsumR = 0;
-double changeinerrorR = 0;
 double olderrorR = 0;
-double PIDoutputR = 0;
-
-double errorS = 0;
-double errorsumS = 0;
 double olderrorS = 0;
-double PIoutput = 0;
+int pgain = 1;
+int igain = 0.5;
+int dgain = 2;
 
+//servo positions in microseconds
 int aileronpos = 1500;
 int elevatorpos = 1500;
 int rudderpos = 1500;
+//turning bank angle
 int leftbankangle = -20;
 int rightbankangle = 20;
 
+//aircraft controls and sensors
+double IMUrollangle = 0; //roll angle of the aircraft from -90 to 90 degrees
+double IMUpitchangle = 0; //pitch angle of the aircraft from -180 to 180 degrees
+float airspeed = 0;
+float altitude = 0;
+int leftdistance = 0;
+int rightdistance = 0;
+int bottomdistance = 0;
+int altitudeflag = 0;
+
+//GPS variables
 double homelatitude = 0, homelongitude = 0;
 double currentlatitude = 0, currentlongitude = 0;
 double oldxpos = 0, oldypos = 0;
+float groundspeed = 0;
 
-float airspeed = 0;
-float altitude = 0;
-
-int leftdistance = 0;
-int rightdistance = 0;
 
 void setup() {
   // put your setup code here, to run once:
-  runmotor();
+
+  //runmotor();
 
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
 
+  avoidobstacles();
 
-
+  if (millis() > timetogohome || altitudeflag == 1){
+    returntohome();
+  }
 
 }
+
 
 void avoidobstacles(){
   unsigned long starttime = millis(); //start time equals time after last reset
 
   if (leftdistance < rightdistance && (leftdistance!=0||rightdistance!=0)){
-    while (millis() < starttime + 1000 ){ // turn for 1 second
+    while (millis() < starttime + obstacleturntime ){ // turn for 1 second
       turnright();
     }
   }
   if (leftdistance > rightdistance && (leftdistance!=0||rightdistance!=0)){
-    while (millis() < starttime + 1000){ // turn for 1 second
+    while (millis() < starttime + obstacleturntime){ // turn for 1 second
     turnleft();
     }
   }
@@ -80,12 +84,12 @@ void avoidobstacles(){
 
 int turnleft(){ //loop this function as much as necessary
 
-  errorL = IMUrollangle - leftbankangle;
-  errorproportionL = errorL / leftbankangle;
-  errorsumL = errorsumL + errorL;
-  changeinerrorL = errorL - olderrorL;
+  double errorL = IMUrollangle - leftbankangle;
+  double errorproportionL = errorL / leftbankangle;
+  double errorsumL = errorsumL + errorL;
+  double changeinerrorL = errorL - olderrorL;
 
-  PIDoutputL = errorproportionL + errorsumL + 2*changeinerrorL;
+  double PIDoutputL = pgain * errorproportionL + igain * errorsumL + dgain * changeinerrorL;
 
   if (PIDoutputL > 0 && aileronpos<1585){ //1585 is approximately +16 degrees; aileron servo must not extend past this
     aileronservo.writeMicroseconds(aileronpos + servoincrement); //If the PIDouput indicates the plane is banked too far right, shift the servo 2.7 degrees left (15 microseconds)
@@ -107,12 +111,12 @@ int turnleft(){ //loop this function as much as necessary
 
 int turnright(){ //loop this function as much as necessary
 
-  errorR = IMUrollangle - rightbankangle;
-  errorproportionR = errorR / rightbankangle;
-  errorsumR = errorsumR + errorR;
-  changeinerrorR = errorR - olderrorR;
+  double errorR = IMUrollangle - rightbankangle;
+  double errorproportionR = errorR / rightbankangle;
+  double errorsumR = errorsumR + errorR;
+  double changeinerrorR = errorR - olderrorR;
 
-  PIDoutputR = errorproportionR + errorsumR + 2*changeinerrorR;
+  double PIDoutputR = pgain * errorproportionR + igain * errorsumR + dgain * changeinerrorR;
 
   if (PIDoutputR > 0 && aileronpos>1415){  
     aileronservo.writeMicroseconds(aileronpos - servoincrement); //If the PIDouput indicates the plane is banked too far right, shift the servo 2.7 degrees left (15 microseconds)
@@ -136,10 +140,10 @@ void setrollstraight(){ //run this function only once to set the aircraft's posi
   rudderservo.writeMicroseconds(1500); //set the rudder back to its straight position
   rudderpos = 1500;
 
-  errorS = IMUrollangle;
-  errorsumS = errorsumS + errorS; //any roll angle is error in this case (roll angle - 0 = roll angle)
+  double errorS = IMUrollangle;
+  double errorsumS = igain * errorsumS + pgain * errorS; //any roll angle is error in this case (roll angle - 0 = roll angle)
 
-  PIoutput = errorS + errorsumS;
+  double PIoutput = errorS + errorsumS;
 
   while (PIoutput > 1 && aileronpos<1585){ 
     aileronservo.writeMicroseconds(aileronpos + servoincrement); //If the PIDouput indicates the plane is banked too far right, increment the servo 2.7 degrees left (15 microseconds)
@@ -152,7 +156,7 @@ void setrollstraight(){ //run this function only once to set the aircraft's posi
 
   return;
 }
-
+/*
 void runmotor(){
   
   while (rotaryencoderturns < initial + 200){
@@ -165,7 +169,7 @@ void runmotor(){
 
   return;
 }
-
+*/
 void avoidcrash(){
   if (IMUrollangle < (-crashangle)){
     aileronservo.writeMicroseconds(aileronpos + servoincrement); //if roll angle is too large, add servo increments
@@ -187,8 +191,7 @@ void avoidcrash(){
   return;
 }
 void returntohome(){
-  int earthradius = 6367460; //Earth's radius in m for Wolfville, Nova Scotia
-
+  int flag = 0;
   //homelatitude = latitude of starting position
   //homelongitude = longitude of starting position
 
@@ -196,10 +199,10 @@ void returntohome(){
   homelatitude = homelatitude * PI/180; //convering to radians
   homelongitude = homelongitude * PI/180;
 
-  currentlatitude = currentlatitude*PI/180; 
-  currentlongitude = currentlatitude*PI/180;
+  currentlatitude = currentlatitude * PI/180; 
+  currentlongitude = currentlatitude * PI/180;
 
-  double hxpos = earthradius * cos(homelatitude) * cos(homelongitude); //approximating the earth as a sphere
+  double hxpos = earthradius * cos(homelatitude) * cos(homelongitude); //approximating the earth as a sphere to get home cartesian coordinates
   double hypos = earthradius * cos(homelatitude) * sin(homelongitude);
 
   double xpos = earthradius * cos(currentlatitude) * cos(currentlongitude);
@@ -212,20 +215,21 @@ void returntohome(){
   double uyvectortohome = yvectortohome / magtohome;
 
 
-  double currentxvector = xpos - oldxpos;
-  double currentyvector = ypos - oldypos;
-  float currentmag = sqrt(currentxvector * currentxvector + currentyvector * currentyvector);
-  double ucurrentxvector = currentxvector / currentmag;
-  double ucurrentyvector = currentyvector / currentmag;
+  double xvector = xpos - oldxpos;
+  double yvector = ypos - oldypos;
+  float mag = sqrt(xvector * xvector + yvector * yvector);
+  double uxvector = xvector / mag;
+  double uyvector = yvector / mag;
 
 
-  float dotprod = xvectortohome * currentxvector + yvectortohome * currentyvector;
+  float dotprod = uxvectortohome * uxvector + uyvectortohome * uyvector;
   float angle = acos(dotprod);
 
-  if (angle > 0.09){
+  if (angle > 0.07){ //error allowance of 0.07 rad (4 degrees)
     turnleft();
-  }else{
+  }else if (flag !=1){
     setrollstraight();
+    flag = 1;
   }
 
   oldxpos = xpos;
@@ -233,7 +237,3 @@ void returntohome(){
 
   return;
 }
-
-
-
-
